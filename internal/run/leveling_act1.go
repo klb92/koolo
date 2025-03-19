@@ -9,226 +9,233 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data/quest"
 	"github.com/hectorgimenez/d2go/pkg/data/stat"
 	"github.com/hectorgimenez/koolo/internal/action"
-	"github.com/hectorgimenez/koolo/internal/action/step"
 	"github.com/hectorgimenez/koolo/internal/game"
-	"github.com/hectorgimenez/koolo/internal/helper"
 	"github.com/hectorgimenez/koolo/internal/ui"
+	"github.com/hectorgimenez/koolo/internal/utils"
 	"github.com/lxn/win"
 )
 
-const scrollOfInifuss = "ScrollOfInifuss"
-
-func (a Leveling) act1() action.Action {
+func (a Leveling) act1() error {
 	running := false
-	return action.NewChain(func(d game.Data) []action.Action {
-		if running || d.PlayerUnit.Area != area.RogueEncampment {
-			return nil
-		}
+	if running || a.ctx.Data.PlayerUnit.Area != area.RogueEncampment {
+		return nil
+	}
 
-		running = true
-		if !d.Quests[quest.Act1DenOfEvil].Completed() {
-			return a.denOfEvil()
-		}
+	running = true
 
-		if lvl, _ := d.PlayerUnit.FindStat(stat.Level, 0); lvl.Value < 13 {
-			return a.countess()
-		}
+	// clear Blood Moor until level 3
+	if lvl, _ := a.ctx.Data.PlayerUnit.FindStat(stat.Level, 0); lvl.Value < 3 {
+		a.bloodMoor()
+	}
 
-		if !a.isCainInTown(d) && !d.Quests[quest.Act1TheSearchForCain].Completed() {
-			return a.deckardCain(d)
-		}
+	// clear Cold Plains until level 6
+	if lvl, _ := a.ctx.Data.PlayerUnit.FindStat(stat.Level, 0); lvl.Value < 6 {
+		a.coldPlains()
+	}
 
-		return a.andariel(d)
+	if lvl, _ := a.ctx.Data.PlayerUnit.FindStat(stat.Level, 0); lvl.Value == 6 || !a.ctx.Data.Quests[quest.Act1DenOfEvil].Completed() {
+		a.denOfEvil()
+	}
+
+	// clear Stony Field until level 9
+	if lvl, _ := a.ctx.Data.PlayerUnit.FindStat(stat.Level, 0); lvl.Value < 9 {
+		a.stonyField()
+	}
+
+	if !a.isCainInTown() && !a.ctx.Data.Quests[quest.Act1TheSearchForCain].Completed() {
+		a.deckardCain()
+	}
+
+	// do Tristram Runs until level 14
+	if lvl, _ := a.ctx.Data.PlayerUnit.FindStat(stat.Level, 0); lvl.Value < 14 {
+		a.tristram()
+	}
+
+	// do Countess Runs until level 17
+	if lvl, _ := a.ctx.Data.PlayerUnit.FindStat(stat.Level, 0); lvl.Value < 17 {
+		a.countess()
+	}
+
+	return a.andariel()
+}
+
+func (a Leveling) bloodMoor() error {
+	err := action.MoveToArea(area.BloodMoor)
+	if err != nil {
+		return err
+	}
+
+	return action.ClearCurrentLevel(false, data.MonsterAnyFilter())
+}
+
+func (a Leveling) coldPlains() error {
+	err := action.MoveToArea(area.ColdPlains)
+	if err != nil {
+		return err
+	}
+
+	return action.ClearCurrentLevel(false, data.MonsterAnyFilter())
+}
+
+func (a Leveling) denOfEvil() error {
+	err := action.MoveToArea(area.BloodMoor)
+	if err != nil {
+		return err
+	}
+
+	err = action.MoveToArea(area.DenOfEvil)
+	if err != nil {
+		return err
+	}
+
+	action.ClearCurrentLevel(false, data.MonsterAnyFilter())
+	action.ReturnTown()
+	action.InteractNPC(npc.Akara)
+	a.ctx.HID.PressKey(win.VK_ESCAPE)
+
+	return nil
+}
+
+func (a Leveling) stonyField() error {
+	err := action.WayPoint(area.StonyField)
+	if err != nil {
+		return err
+	}
+
+	return action.ClearCurrentLevel(false, data.MonsterAnyFilter())
+}
+
+func (a Leveling) isCainInTown() bool {
+	_, found := a.ctx.Data.Monsters.FindOne(npc.DeckardCain5, data.MonsterTypeNone)
+
+	return found
+}
+
+func (a Leveling) deckardCain() error {
+	action.WayPoint(area.RogueEncampment)
+	err := action.WayPoint(area.DarkWood)
+	if err != nil {
+		return err
+	}
+
+	err = action.MoveTo(func() (data.Position, bool) {
+		for _, o := range a.ctx.Data.Objects {
+			if o.Name == object.InifussTree {
+				return o.Position, true
+			}
+		}
+		return data.Position{}, false
 	})
-}
-
-func (a Leveling) denOfEvil() []action.Action {
-	a.logger.Info("Starting Den of Evil run")
-	return []action.Action{
-		a.builder.MoveToArea(area.BloodMoor),
-		a.builder.Buff(),
-		a.builder.MoveToArea(area.DenOfEvil),
-		a.builder.Buff(),
-		a.builder.ClearArea(false, data.MonsterAnyFilter()),
-	}
-}
-
-//func (a Leveling) bloodRaven() action.Action {
-//	return action.NewChain(func(d game.Data) []action.Action {
-//		a.logger.Info("Starting Blood Raven quest")
-//		return []action.Action{
-//			a.builder.WayPoint(area.ColdPlains),
-//			a.builder.MoveToArea(area.BurialGrounds),
-//			a.char.Buff(),
-//			action.NewStepChain(func(d game.Data) []step.Step {
-//				for _, l := range d.AdjacentLevels {
-//					if l.Area == area.Mausoleum {
-//						return []step.Step{step.MoveTo(l.Position, step.StopAtDistance(50))}
-//					}
-//				}
-//
-//				return []step.Step{}
-//			}),
-//			a.char.KillMonsterSequence(func(d game.Data) (data.UnitID, bool) {
-//				for _, m := range d.Monsters.Enemies() {
-//					if pather.DistanceFromMe(d, m.Position) < 3 {
-//						return m.UnitID, true
-//					}
-//
-//					if m.Name == npc.BloodRaven {
-//						return m.UnitID, true
-//					}
-//				}
-//
-//				return 0, false
-//			}, nil, step.Distance(5, 15)),
-//		}
-//	})
-//}
-
-func (a Leveling) countess() []action.Action {
-	a.logger.Info("Starting Countess run")
-	return Countess{baseRun: a.baseRun}.BuildActions()
-}
-
-func (a Leveling) deckardCain(d game.Data) (actions []action.Action) {
-	a.logger.Info("Rescuing Cain")
-	if _, found := d.Inventory.Find("KeyToTheCairnStones"); !found {
-		actions = []action.Action{
-			a.builder.WayPoint(area.DarkWood),
-			a.builder.Buff(),
-			a.builder.MoveTo(func(d game.Data) (data.Position, bool) {
-				for _, o := range d.Objects {
-					if o.Name == object.InifussTree {
-						return o.Position, true
-					}
-				}
-
-				return data.Position{}, false
-			}),
-			a.builder.InteractObject(object.InifussTree, func(d game.Data) bool {
-				_, found := d.Inventory.Find(scrollOfInifuss)
-				return found
-			}),
-			a.builder.ItemPickup(false, 30),
-			a.builder.ReturnTown(),
-			a.builder.InteractNPC(
-				npc.Akara,
-				step.KeySequence(win.VK_ESCAPE),
-			),
-		}
-
-		// Heal and refill pots
-		actions = append(actions,
-			a.builder.ReturnTown(),
-			a.builder.RecoverCorpse(),
-			a.builder.IdentifyAll(false),
-			a.builder.Stash(false),
-			a.builder.VendorRefill(false, true),
-		)
-
-		if a.CharacterCfg.Game.Leveling.EnsurePointsAllocation {
-			actions = append(actions,
-				a.builder.EnsureStatPoints(),
-				a.builder.EnsureSkillPoints(),
-			)
-		}
-
-		if a.CharacterCfg.Game.Leveling.EnsureKeyBinding {
-			actions = append(actions,
-				a.builder.EnsureSkillBindings(),
-			)
-		}
-
-		actions = append(actions,
-			a.builder.Heal(),
-			a.builder.ReviveMerc(),
-			a.builder.HireMerc(),
-			a.builder.Repair(),
-		)
+	if err != nil {
+		return err
 	}
 
-	// Reuse Tristram Run actions
-	actions = append(actions, Tristram{baseRun: a.baseRun}.BuildActions()...)
+	action.ClearAreaAroundPlayer(30, data.MonsterAnyFilter())
 
-	return actions
+	obj, found := a.ctx.Data.Objects.FindOne(object.InifussTree)
+	if !found {
+		a.ctx.Logger.Debug("InifussTree not found")
+	}
+
+	err = action.InteractObject(obj, func() bool {
+		updatedObj, found := a.ctx.Data.Objects.FindOne(object.InifussTree)
+		if found {
+			if !updatedObj.Selectable {
+				a.ctx.Logger.Debug("Interacted with InifussTree")
+			}
+			return !updatedObj.Selectable
+		}
+		return false
+	})
+	if err != nil {
+		return err
+	}
+
+	action.ItemPickup(0)
+	action.ReturnTown()
+	action.InteractNPC(npc.Akara)
+	a.ctx.HID.PressKey(win.VK_ESCAPE)
+
+	//Reuse Tristram Run actions
+	err = Tristram{}.Run()
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
-func (a Leveling) andariel(d game.Data) []action.Action {
-	a.logger.Info("Starting Andariel run")
-	actions := []action.Action{
-		a.builder.WayPoint(area.CatacombsLevel2),
-		a.builder.Buff(),
-		a.builder.MoveToArea(area.CatacombsLevel3),
-		a.builder.MoveToArea(area.CatacombsLevel4),
-	}
-	actions = append(actions, a.builder.ReturnTown()) // Return town to pickup pots and heal, just in case...
+func (a Leveling) tristram() error {
+	return Tristram{}.Run()
+}
 
-	potsToBuy := 4
-	if d.MercHPPercent() > 0 {
-		potsToBuy = 8
+func (a Leveling) countess() error {
+	return Countess{}.Run()
+}
+
+func (a Leveling) andariel() error {
+	err := action.WayPoint(area.CatacombsLevel2)
+	if err != nil {
+		return err
+	}
+
+	err = action.MoveToArea(area.CatacombsLevel3)
+	action.MoveToArea(area.CatacombsLevel4)
+	if err != nil {
+		return err
 	}
 
 	// Return to the city, ensure we have pots and everything, and get some antidote potions
-	actions = append(actions,
-		a.builder.ReturnTown(),
-		a.builder.VendorRefill(false, true),
-		a.builder.BuyAtVendor(npc.Akara, action.VendorItemRequest{
-			Item:     "AntidotePotion",
-			Quantity: potsToBuy,
-			Tab:      4,
-		}),
-		action.NewStepChain(func(d game.Data) []step.Step {
-			return []step.Step{
-				step.SyncStep(func(d game.Data) error {
-					a.HID.PressKeyBinding(d.KeyBindings.Inventory)
-					x := 0
-					for _, itm := range d.Inventory.ByLocation(item.LocationInventory) {
-						if itm.Name != "AntidotePotion" {
-							continue
-						}
-						pos := a.UIManager.GetScreenCoordsForItem(itm)
-						helper.Sleep(500)
+	action.ReturnTown()
 
-						if x > 3 {
-							a.HID.Click(game.LeftButton, pos.X, pos.Y)
-							helper.Sleep(300)
-							if d.LegacyGraphics {
-								a.HID.Click(game.LeftButton, ui.MercAvatarPositionXClassic, ui.MercAvatarPositionYClassic)
-							} else {
-								a.HID.Click(game.LeftButton, ui.MercAvatarPositionX, ui.MercAvatarPositionY)
-							}
+	potsToBuy := 4
+	if a.ctx.Data.MercHPPercent() > 0 {
+		potsToBuy = 8
+	}
 
-						} else {
-							a.HID.Click(game.RightButton, pos.X, pos.Y)
-						}
-						x++
-					}
+	action.VendorRefill(false, true)
+	action.BuyAtVendor(npc.Akara, action.VendorItemRequest{
+		Item:     "AntidotePotion",
+		Quantity: potsToBuy,
+		Tab:      4,
+	})
 
-					a.HID.PressKey(win.VK_ESCAPE)
-					return nil
-				}),
+	a.ctx.HID.PressKeyBinding(a.ctx.Data.KeyBindings.Inventory)
+
+	x := 0
+	for _, itm := range a.ctx.Data.Inventory.ByLocation(item.LocationInventory) {
+		if itm.Name != "AntidotePotion" {
+			continue
+		}
+		pos := ui.GetScreenCoordsForItem(itm)
+		utils.Sleep(500)
+
+		if x > 3 {
+			a.ctx.HID.Click(game.LeftButton, pos.X, pos.Y)
+			utils.Sleep(300)
+			if a.ctx.Data.LegacyGraphics {
+				a.ctx.HID.Click(game.LeftButton, ui.MercAvatarPositionXClassic, ui.MercAvatarPositionYClassic)
+			} else {
+				a.ctx.HID.Click(game.LeftButton, ui.MercAvatarPositionX, ui.MercAvatarPositionY)
 			}
-		}),
-		a.builder.UsePortalInTown(),
-		a.builder.Buff(),
-	)
+		} else {
+			a.ctx.HID.Click(game.RightButton, pos.X, pos.Y)
+		}
+		x++
+	}
 
-	actions = append(actions,
-		a.builder.UsePortalInTown(),
-		a.builder.MoveTo(func(d game.Data) (data.Position, bool) {
-			return andarielStartingPosition, true
-		}),
-		a.char.KillAndariel(),
-		a.builder.ReturnTown(),
-		a.builder.InteractNPC(npc.Warriv, step.KeySequence(win.VK_HOME, win.VK_DOWN, win.VK_RETURN)),
-	)
+	a.ctx.HID.PressKey(win.VK_ESCAPE)
 
-	return actions
-}
+	action.UsePortalInTown()
+	action.Buff()
 
-func (a Leveling) isCainInTown(d game.Data) bool {
-	_, found := d.Monsters.FindOne(npc.DeckardCain5, data.MonsterTypeNone)
+	action.MoveTo(func() (data.Position, bool) {
+		return andarielAttackPos1, true
+	})
+	a.ctx.Char.KillAndariel()
+	action.ReturnTown()
+	action.InteractNPC(npc.Warriv)
+	a.ctx.HID.KeySequence(win.VK_HOME, win.VK_DOWN, win.VK_RETURN)
 
-	return found
+	return nil
 }

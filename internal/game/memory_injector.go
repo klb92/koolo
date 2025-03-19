@@ -16,6 +16,7 @@ import (
 const fullAccess = windows.PROCESS_VM_OPERATION | windows.PROCESS_VM_WRITE | windows.PROCESS_VM_READ
 
 type MemoryInjector struct {
+	isLoaded              bool
 	pid                   uint32
 	handle                windows.Handle
 	getCursorPosAddr      uintptr
@@ -40,6 +41,10 @@ func InjectorInit(logger *slog.Logger, pid uint32) (*MemoryInjector, error) {
 }
 
 func (i *MemoryInjector) Load() error {
+	if i.isLoaded {
+		return nil
+	}
+
 	modules, err := memory.GetProcessModules(i.pid)
 	if err != nil {
 		return fmt.Errorf("error getting process modules: %w", err)
@@ -80,27 +85,37 @@ func (i *MemoryInjector) Load() error {
 		return errors.New("could not find GetCursorPos address")
 	}
 
+	i.isLoaded = true
 	return nil
 }
 
 func (i *MemoryInjector) Unload() error {
 	if err := i.RestoreMemory(); err != nil {
-		i.logger.Error("error restoring memory", err)
+		i.logger.Error(fmt.Sprintf("error restoring memory: %v", err))
 	}
 
 	return windows.CloseHandle(i.handle)
 }
 
 func (i *MemoryInjector) RestoreMemory() error {
+	if !i.isLoaded {
+		return nil
+	}
+
+	i.isLoaded = false
 	err := i.RestoreGetCursorPosAddr()
 	if err != nil {
-		i.logger.Error("error restoring memory", err)
+		return fmt.Errorf("error restoring memory: %v", err)
 	}
 
 	return i.RestoreGetKeyState()
 }
 
 func (i *MemoryInjector) CursorPos(x, y int) error {
+	if !i.isLoaded {
+		return nil
+	}
+
 	/*
 		push rax
 		mov rax, rcx
@@ -123,15 +138,21 @@ func (i *MemoryInjector) CursorPos(x, y int) error {
 }
 
 func (i *MemoryInjector) OverrideGetKeyState(key byte) error {
+	if !i.isLoaded {
+		return nil
+	}
 	/*
-		cmp rcx, 0x12
-		mov rax, 0x8000
-		ret
+		Assembly: Compare key byte, set al if match, shift left to create 0x8000 if matched (4 cycles)
+		cmp cl, key    -> Compare key byte
+		sete al        -> Set al to 1 if equal
+		shl ax, 15     -> Shift left by 15 to create 0x8000 if was 1, else 0
+		ret            -> Return with result in ax
 	*/
-	bytes := []byte{0x48, 0x81, 0xF9, key, 0x00, 0x00, 0x00, 0x48, 0xB8, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xC3}
+
+	bytes := []byte{0x80, 0xF9, key, 0x0F, 0x94, 0xC0, 0x66, 0xC1, 0xE0, 0x0F, 0xC3}
+
 	return windows.WriteProcessMemory(i.handle, i.getKeyStateAddr, &bytes[0], uintptr(len(bytes)), nil)
 }
-
 func (i *MemoryInjector) OverrideSetCursorPos() error {
 	/*
 		Just do nothing, this prevents the game from moving our cursor, for example when opening inventory or wp list
