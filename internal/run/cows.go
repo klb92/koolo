@@ -1,12 +1,8 @@
 package run
 
 import (
-	"slices"
+	"errors"
 	"strings"
-	"time"
-
-	"github.com/hectorgimenez/koolo/internal/config"
-	"github.com/hectorgimenez/koolo/internal/game"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/d2go/pkg/data/area"
@@ -15,113 +11,250 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data/object"
 	"github.com/hectorgimenez/koolo/internal/action"
 	"github.com/hectorgimenez/koolo/internal/action/step"
+	"github.com/hectorgimenez/koolo/internal/config"
+	"github.com/hectorgimenez/koolo/internal/context"
+	"github.com/hectorgimenez/koolo/internal/utils"
 )
 
 type Cows struct {
-	baseRun
+	ctx *context.Status
+}
+
+func NewCows() *Cows {
+	return &Cows{
+		ctx: context.Get(),
+	}
 }
 
 func (a Cows) Name() string {
 	return string(config.CowsRun)
 }
 
-func (a Cows) BuildActions() []action.Action {
-	actions := []action.Action{
-		a.getWirtsLeg(),
-	}
+func (a Cows) Run() error {
 
-	// Sell junk, refill potions, etc. (basically ensure space for getting the TP tome)
-	actions = append(actions, a.builder.PreRun(false)...)
+	// Check if we already have the items in cube so we can skip.
+	if a.hasWristAndBookInCube() {
 
-	return append(actions,
-		a.preparePortal(),
-		a.builder.InteractObject(object.PermanentTownPortal, func(d game.Data) bool {
-			return d.PlayerUnit.Area == area.MooMooFarm
-		}),
-		a.builder.Buff(),
-		a.builder.ClearArea(a.CharacterCfg.Game.Cows.OpenChests, data.MonsterAnyFilter()),
-	)
-}
+		// Sell junk, refill potions, etc. (basically ensure space for getting the TP tome)
+		action.PreRun(false)
 
-func (a Cows) getWirtsLeg() action.Action {
-	return action.NewChain(func(d game.Data) []action.Action {
-		if _, found := d.Inventory.Find("WirtsLeg", item.LocationStash, item.LocationInventory); found {
-			a.logger.Info("WirtsLeg found, skip finding it")
-			return nil
-		}
-
-		return []action.Action{
-			a.builder.WayPoint(area.StonyField), // Moving to starting point (Stony Field)
-			action.NewChain(func(d game.Data) []action.Action {
-				for _, o := range d.Objects {
-					if o.Name == object.CairnStoneAlpha {
-						return []action.Action{a.builder.MoveToCoords(o.Position)}
-					}
-				}
-
-				return nil
-			}),
-			a.builder.ClearAreaAroundPlayer(10, data.MonsterAnyFilter()),
-			a.builder.ItemPickup(false, 15),
-			a.builder.InteractObject(object.PermanentTownPortal, func(d game.Data) bool {
-				return d.PlayerUnit.Area == area.Tristram
-			}, step.Wait(time.Second)),
-			a.builder.InteractObject(object.WirtCorpse, func(d game.Data) bool {
-				_, found := d.Inventory.Find("WirtsLeg")
-
-				return found
-			}),
-			a.builder.ItemPickup(false, 30),
-			a.builder.ReturnTown(),
-		}
-	})
-}
-
-func (a Cows) preparePortal() action.Action {
-	return action.NewChain(func(d game.Data) (actions []action.Action) {
-		if d.PlayerUnit.Area != area.RogueEncampment {
-			actions = append(actions, a.builder.WayPoint(area.RogueEncampment))
-		}
-
-		currentWPTomes := make([]data.UnitID, 0)
-		leg, found := d.Inventory.Find("WirtsLeg")
-		if !found {
-			a.logger.Error("WirtsLeg could not be found, portal cannot be opened")
-			return nil
-		}
-
-		// Backup current WP tomes in inventory, before getting new one at Akara
-		for _, itm := range d.Inventory.ByLocation(item.LocationInventory) {
-			if strings.EqualFold(string(itm.Name), item.TomeOfTownPortal) {
-				currentWPTomes = append(currentWPTomes, itm.UnitID)
+		a.ctx.Logger.Info("Wrist Leg and Book found in cube")
+		// Move to town if needed
+		if !a.ctx.Data.PlayerUnit.Area.IsTown() {
+			if err := action.ReturnTown(); err != nil {
+				return err
 			}
 		}
 
-		return append(actions,
-			a.builder.BuyAtVendor(npc.Akara, action.VendorItemRequest{
-				Item:     item.TomeOfTownPortal,
-				Quantity: 1,
-				Tab:      4,
-			}),
-			action.NewChain(func(d game.Data) []action.Action {
-				// Ensure we are using the new WP tome and not the one that we are using for TPs
-				var newWPTome data.Item
-				for _, itm := range d.Inventory.ByLocation(item.LocationInventory) {
-					if strings.EqualFold(string(itm.Name), item.TomeOfTownPortal) && !slices.Contains(currentWPTomes, itm.UnitID) {
-						newWPTome = itm
-					}
-				}
+		// Find and interact with stash
+		bank, found := a.ctx.Data.Objects.FindOne(object.Bank)
+		if !found {
+			return errors.New("stash not found")
+		}
+		err := action.InteractObject(bank, func() bool {
+			return a.ctx.Data.OpenMenus.Stash
+		})
+		if err != nil {
+			return err
+		}
 
-				if newWPTome.UnitID == 0 {
-					a.logger.Error("TomeOfTownPortal could not be found, portal cannot be opened")
-					return nil
-				}
+		// Open cube and transmute Cow Level portal
+		if err := action.CubeTransmute(); err != nil {
+			return err
+		}
+		// If we dont have Wirstleg and Book in cube
+	} else {
+		// First clean up any extra tomes if needed
+		err := a.cleanupExtraPortalTomes()
+		if err != nil {
+			return err
+		}
 
-				return []action.Action{
-					a.builder.CubeAddItems(leg, newWPTome),
-					a.builder.CubeTransmute(),
-				}
-			}),
-		)
+		// Get Wrist leg
+		err = a.getWirtsLeg()
+		if err != nil {
+			return err
+		}
+		// Sell junk, refill potions, etc. (basically ensure space for getting the TP tome)
+		action.PreRun(false)
+
+		err = a.preparePortal()
+		if err != nil {
+			return err
+		}
+	}
+	// Make sure all menus are closed before interacting with cow portal
+	if err := step.CloseAllMenus(); err != nil {
+		return err
+	}
+
+	// Add a small delay to ensure everything is settled
+	utils.Sleep(700)
+
+	townPortal, found := a.ctx.Data.Objects.FindOne(object.PermanentTownPortal)
+	if !found {
+		return errors.New("cow portal not found")
+	}
+
+	err := action.InteractObject(townPortal, func() bool {
+		return a.ctx.Data.AreaData.Area == area.MooMooFarm && a.ctx.Data.AreaData.IsInside(a.ctx.Data.PlayerUnit.Position)
 	})
+	if err != nil {
+		return err
+	}
+
+	return action.ClearCurrentLevel(a.ctx.CharacterCfg.Game.Cows.OpenChests, data.MonsterAnyFilter())
+}
+
+func (a Cows) getWirtsLeg() error {
+	if a.hasWirtsLeg() {
+		a.ctx.Logger.Info("WirtsLeg found from previous game, we can skip")
+		return nil
+	}
+
+	err := action.WayPoint(area.StonyField)
+	if err != nil {
+		return err
+	}
+
+	cainStone, found := a.ctx.Data.Objects.FindOne(object.CairnStoneAlpha)
+	if !found {
+		return errors.New("cain stones not found")
+	}
+	err = action.MoveToCoords(cainStone.Position)
+	if err != nil {
+		return err
+	}
+	action.ClearAreaAroundPlayer(10, data.MonsterAnyFilter())
+
+	portal, found := a.ctx.Data.Objects.FindOne(object.PermanentTownPortal)
+	if !found {
+		return errors.New("tristram not found")
+	}
+	err = action.InteractObject(portal, func() bool {
+		return a.ctx.Data.AreaData.Area == area.Tristram && a.ctx.Data.AreaData.IsInside(a.ctx.Data.PlayerUnit.Position)
+	})
+	if err != nil {
+		return err
+	}
+
+	wirtCorpse, found := a.ctx.Data.Objects.FindOne(object.WirtCorpse)
+	if !found {
+		return errors.New("wirt corpse not found")
+	}
+	err = action.InteractObject(wirtCorpse, func() bool {
+		return a.hasWirtsLeg()
+	})
+
+	return action.ReturnTown()
+}
+
+func (a Cows) preparePortal() error {
+	err := action.WayPoint(area.RogueEncampment)
+	if err != nil {
+		return err
+	}
+
+	leg, found := a.ctx.Data.Inventory.Find("WirtsLeg",
+		item.LocationStash,
+		item.LocationInventory,
+		item.LocationCube)
+	if !found {
+		return errors.New("WirtsLeg could not be found, portal cannot be opened")
+	}
+
+	// Track if we found a usable spare tome
+	var spareTome data.Item
+
+	// Look for an existing spare tome (not in locked inventory slots)
+	for _, itm := range a.ctx.Data.Inventory.ByLocation(item.LocationInventory) {
+		if strings.EqualFold(string(itm.Name), item.TomeOfTownPortal) && !action.IsInLockedInventorySlot(itm) {
+			spareTome = itm
+			break
+		}
+	}
+
+	// If no spare tome found, buy a new one
+	if spareTome.UnitID == 0 {
+		err = action.BuyAtVendor(npc.Akara, action.VendorItemRequest{
+			Item:     item.TomeOfTownPortal,
+			Quantity: 1,
+			Tab:      4,
+		})
+		if err != nil {
+			return err
+		}
+
+		// Find the newly bought tome (not in locked slots)
+		for _, itm := range a.ctx.Data.Inventory.ByLocation(item.LocationInventory) {
+			if strings.EqualFold(string(itm.Name), item.TomeOfTownPortal) && !action.IsInLockedInventorySlot(itm) {
+				spareTome = itm
+				break
+			}
+		}
+	}
+
+	if spareTome.UnitID == 0 {
+		return errors.New("failed to obtain spare TomeOfTownPortal for cow portal")
+	}
+
+	err = action.CubeAddItems(leg, spareTome)
+	if err != nil {
+		return err
+	}
+
+	return action.CubeTransmute()
+}
+func (a Cows) cleanupExtraPortalTomes() error {
+	// Only attempt cleanup if we don't have Wirt's Leg
+	if _, hasLeg := a.ctx.Data.Inventory.Find("WirtsLeg", item.LocationStash, item.LocationInventory, item.LocationCube); !hasLeg {
+		// Find all portal tomes, keeping track of which are in locked slots
+		var protectedTomes []data.Item
+		var unprotectedTomes []data.Item
+
+		for _, itm := range a.ctx.Data.Inventory.ByLocation(item.LocationInventory) {
+			if strings.EqualFold(string(itm.Name), item.TomeOfTownPortal) {
+				if action.IsInLockedInventorySlot(itm) {
+					protectedTomes = append(protectedTomes, itm)
+				} else {
+					unprotectedTomes = append(unprotectedTomes, itm)
+				}
+			}
+		}
+
+		// Only drop extra unprotected tomes if we have any
+		if len(unprotectedTomes) > 0 {
+			a.ctx.Logger.Info("Extra TomeOfTownPortal found - dropping it")
+			for i := 0; i < len(unprotectedTomes); i++ {
+				err := action.DropInventoryItem(unprotectedTomes[i])
+				if err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+func (a Cows) hasWristAndBookInCube() bool {
+	cubeItems := a.ctx.Data.Inventory.ByLocation(item.LocationCube)
+
+	var hasLeg, hasTome bool
+	for _, item := range cubeItems {
+		if strings.EqualFold(string(item.Name), "WirtsLeg") {
+			hasLeg = true
+		}
+		if strings.EqualFold(string(item.Name), "TomeOfTownPortal") {
+			hasTome = true
+		}
+	}
+
+	return hasLeg && hasTome
+}
+
+func (a Cows) hasWirtsLeg() bool {
+	_, found := a.ctx.Data.Inventory.Find("WirtsLeg",
+		item.LocationStash,
+		item.LocationInventory,
+		item.LocationCube)
+	return found
 }

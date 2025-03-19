@@ -3,8 +3,16 @@
         <label><input type="checkbox" name="gamePitMoveThroughBlackMarsh" {{ if .Config.Game.Pit.MoveThroughBlackMarsh }}checked{{ end }}> Move through Black Marsh</label>
         <label><input type="checkbox" name="gamePitOpenChests" {{ if .Config.Game.Pit.OpenChests }}checked{{ end }}> Open chests</label>
         <label><input type="checkbox" name="gamePitFocusOnElitePacks" {{ if .Config.Game.Pit.FocusOnElitePacks }}checked{{ end }}> Focus on elite packs</label>
+        <label><input type="checkbox" name="gamePitOnlyClearLevel2" {{ if .Config.Game.Pit.OnlyClearLevel2 }}checked{{ end }}> Only clear level 2</label>
     </fieldset>
 {{ end }}
+
+{{ define "andariel" }}
+    <fieldset>
+        <label><input type="checkbox" name="gameAndarielClearRoom" {{ if .Config.Game.Andariel.ClearRoom }}checked{{ end }}> Clear room first</label>
+    </fieldset>
+{{ end }}
+
 {{ define "cows" }}
     <fieldset>
         <label><input type="checkbox" name="gameCowsOpenChests" {{ if .Config.Game.Cows.OpenChests }}checked{{ end }}> Open chests</label>
@@ -44,10 +52,32 @@
     </fieldset>
 {{ end }}
 
+{{ define "drifter_cavern" }}
+    <fieldset>
+        <label><input type="checkbox" name="gameDrifterCavernOpenChests" {{ if .Config.Game.DrifterCavern.OpenChests }}checked{{ end }}> Open chests</label>
+        <label><input type="checkbox" name="gameDrifterCavernFocusOnElitePacks" {{ if .Config.Game.DrifterCavern.FocusOnElitePacks }}checked{{ end }}> Focus on elite packs</label>
+    </fieldset>
+{{ end }}
+
+{{ define "spider_cavern" }}
+    <fieldset>
+        <label><input type="checkbox" name="gameSpiderCavernOpenChests" {{ if .Config.Game.SpiderCavern.OpenChests }}checked{{ end }}> Open chests</label>
+        <label><input type="checkbox" name="gameSpiderCavernFocusOnElitePacks" {{ if .Config.Game.SpiderCavern.FocusOnElitePacks }}checked{{ end }}> Focus on elite packs</label>
+    </fieldset>
+{{ end }}
+
+{{ define "arachnid_lair" }}
+    <fieldset>
+        <label><input type="checkbox" name="gameArachnidLairOpenChests" {{ if .Config.Game.ArachnidLair.OpenChests }}checked{{ end }}> Open chests</label>
+        <label><input type="checkbox" name="gameArachnidLairFocusOnElitePacks" {{ if .Config.Game.ArachnidLair.FocusOnElitePacks }}checked{{ end }}> Focus on elite packs</label>
+    </fieldset>
+{{ end }}
+
 {{ define "mephisto" }}
     <fieldset>
         <label><input type="checkbox" name="gameMephistoKillCouncilMembers" {{ if .Config.Game.Mephisto.KillCouncilMembers }}checked{{ end }}> Kill council members</label>
         <label><input type="checkbox" name="gameMephistoOpenChests" {{ if .Config.Game.Mephisto.OpenChests }}checked{{ end }}> Open chests</label>
+        <label><input type="checkbox" name="gameMephistoExitToA4" {{ if .Config.Game.Mephisto.ExitToA4 }}checked{{ end }}> Leave through red portal</label>
     </fieldset>
 {{ end }}
 
@@ -80,11 +110,27 @@
     </fieldset>
 {{ end }}
 
-{{ define "diablo" }}
+{{ define "lower_kurast_chest" }}
     <fieldset>
-        <label><input type="checkbox" name="gameDiabloClearArea" {{ if .Config.Game.Diablo.ClearArea }}checked{{ end }}> Clear area</label>
-        <label><input type="checkbox" name="gameDiabloOnlyElites" {{ if .Config.Game.Diablo.OnlyElites }}checked{{ end }}> Focus on elite packs</label>
+        <label><input type="checkbox" name="gameLowerKurastChestOpenRacks" {{ if .Config.Game.LowerKurastChest.OpenRacks }}checked{{ end }}> Weapon Racks + Armor Stands</label>
+    </fieldset>
+{{ end }}
+
+{{ define "diablo" }}
+    <fieldset class="options-group">
+        <legend>Boss Options</legend>
         <label><input type="checkbox" name="gameDiabloKillDiablo" {{ if .Config.Game.Diablo.KillDiablo }}checked{{ end }}> Kill Diablo</label>
+        <label><input type="checkbox" name="gameDiabloDisableItemPickupDuringBosses" {{ if .Config.Game.Diablo.DisableItemPickupDuringBosses }}checked{{ end }}> Temporarily Disable Item Pickup During Seal Boss Fights</label>
+        <label>
+            Attack from Distance:
+            <input type="number" name="gameDiabloAttackFromDistance" value="{{ .Config.Game.Diablo.AttackFromDistance }}" min="0" max="25">
+        </label>
+    </fieldset>
+
+    <fieldset class="options-group">
+        <legend>Clear Options</legend>
+        <label><input type="checkbox" name="gameDiabloStartFromStar" {{ if .Config.Game.Diablo.StartFromStar }}checked{{ end }}> Start From Star (Disabled = Entrance) </label>
+        <label><input type="checkbox" name="gameDiabloFocusOnElitePacks" {{ if .Config.Game.Diablo.FocusOnElitePacks }}checked{{ end }}> Elite Packs Only</label>
     </fieldset>
 {{ end }}
 
@@ -100,14 +146,14 @@
         <label>Act 1</label>
         <label><input type="checkbox" name="gameQuestsClearDen" {{ if .Config.Game.Quests.ClearDen }}checked{{ end }}> Clear Den</label>
         <label><input type="checkbox" name="gameQuestsRescueCain" {{ if .Config.Game.Quests.RescueCain }}checked{{ end }}> Rescue Cain</label>
-        <label><input type="checkbox" name="gameQuestsRetrieveHammer" {{ if .Config.Game.Quests.RetrieveHammer }}checked{{ end }}> Retrieve Hammer</label>                        
+        <label><input type="checkbox" name="gameQuestsRetrieveHammer" {{ if .Config.Game.Quests.RetrieveHammer }}checked{{ end }}> Retrieve Hammer</label>
         <label>Act 2</label>
         <label><input type="checkbox" name="gameQuestsGetCube" {{ if .Config.Game.Quests.GetCube }}checked{{ end }}> Get Cube</label>
-        <label><input type="checkbox" name="gameQuestsKillRadament" {{ if .Config.Game.Quests.KillRadament }}checked{{ end }}> Kill Radament</label>                        
+        <label><input type="checkbox" name="gameQuestsKillRadament" {{ if .Config.Game.Quests.KillRadament }}checked{{ end }}> Kill Radament</label>
         <label>Act 3</label>
-        <label><input type="checkbox" name="gameQuestsRetrieveBook" {{ if .Config.Game.Quests.RetrieveBook }}checked{{ end }}> Retrieve Book</label>                                
+        <label><input type="checkbox" name="gameQuestsRetrieveBook" {{ if .Config.Game.Quests.RetrieveBook }}checked{{ end }}> Retrieve Book</label>
         <label>Act 4</label>
-        <label><input type="checkbox" name="gameQuestsKillIzual" {{ if .Config.Game.Quests.KillIzual }}checked{{ end }}> Kill Izual</label>                                     
+        <label><input type="checkbox" name="gameQuestsKillIzual" {{ if .Config.Game.Quests.KillIzual }}checked{{ end }}> Kill Izual</label>
         <label>Act 5</label>
         <label><input type="checkbox" name="gameQuestsKillShenk" {{ if .Config.Game.Quests.KillShenk }}checked{{ end }}> Kill Shenk</label>
         <label><input type="checkbox" name="gameQuestsRescueAnya" {{ if .Config.Game.Quests.RescueAnya }}checked{{ end }}> Rescue Anya</label>
@@ -120,6 +166,7 @@
     <fieldset>
         <label><input type="checkbox" name="gameTerrorZoneFocusOnElitePacks" {{ if .Config.Game.TerrorZone.FocusOnElitePacks }}checked{{ end }}> Focus on elite packs</label>
         <label><input type="checkbox" name="gameTerrorZoneSkipOtherRuns" {{ if .Config.Game.TerrorZone.SkipOtherRuns }}checked{{ end }}> Skip all runs and only do TZ when available</label>
+        <label><input type="checkbox" name="gameTerrorZoneOpenChests" {{ if .Config.Game.TerrorZone.OpenChests }}checked{{ end }}> Open chests</label>
         <label>Skip on immunities</label>
         <fieldset class="grid">
             <label><input type="checkbox" name="gameTerrorZoneSkipOnImmunities[]" value="cold" {{ if isInSlice .Config.Game.TerrorZone.SkipOnImmunities "cold" }}checked{{ end }}> Cold</label>
@@ -127,9 +174,9 @@
             <label><input type="checkbox" name="gameTerrorZoneSkipOnImmunities[]" value="light" {{ if isInSlice .Config.Game.TerrorZone.SkipOnImmunities "light" }}checked{{ end }}> Light</label>
             <label><input type="checkbox" name="gameTerrorZoneSkipOnImmunities[]" value="poison" {{ if isInSlice .Config.Game.TerrorZone.SkipOnImmunities "poison" }}checked{{ end }}> Poison</label>
         </fieldset>
-        <label>Tracked areas</label>
+        <label>Tracked areas <input type="checkbox" name="tzTrackAll" id="tzTrackAll"></label>
         {{ range $id, $name := .AvailableTZs }}
-            <label><input type="checkbox" name="gameTerrorZoneAreas[]" value="{{ $id }}" {{ if isTZSelected $topLevelContext.Config.Game.TerrorZone.Areas $id }}checked{{ end }}>{{ $name }}</label>
+            <label><input type="checkbox" class="tzTrackCheckbox" name="gameTerrorZoneAreas[]" value="{{ $id }}" {{ if isTZSelected $topLevelContext.Config.Game.TerrorZone.Areas $id }}checked{{ end }}>{{ $name }}</label>
         {{ end }}
     </fieldset>
 {{ end }}

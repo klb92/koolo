@@ -4,8 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"time"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
+	"github.com/hectorgimenez/koolo/internal/utils"
 
 	"os"
 	"strings"
@@ -39,13 +41,16 @@ type KooloCfg struct {
 	LogSaveDirectory      string `yaml:"logSaveDirectory"`
 	D2LoDPath             string `yaml:"D2LoDPath"`
 	D2RPath               string `yaml:"D2RPath"`
+	CentralizedPickitPath string `yaml:"centralizedPickitPath"`
 	Discord               struct {
-		Enabled                   bool   `yaml:"enabled"`
-		EnableGameCreatedMessages bool   `yaml:"enableGameCreatedMessages"`
-		EnableNewRunMessages      bool   `yaml:"enableNewRunMessages"`
-		EnableRunFinishMessages   bool   `yaml:"enableRunFinishMessages"`
-		ChannelID                 string `yaml:"channelId"`
-		Token                     string `yaml:"token"`
+		Enabled                      bool     `yaml:"enabled"`
+		EnableGameCreatedMessages    bool     `yaml:"enableGameCreatedMessages"`
+		EnableNewRunMessages         bool     `yaml:"enableNewRunMessages"`
+		EnableRunFinishMessages      bool     `yaml:"enableRunFinishMessages"`
+		EnableDiscordChickenMessages bool     `yaml:"enableDiscordChickenMessages"`
+		BotAdmins                    []string `yaml:"botAdmins"`
+		ChannelID                    string   `yaml:"channelId"`
+		Token                        string   `yaml:"token"`
 	} `yaml:"discord"`
 	DiscordWebhook struct {
 		Enabled    bool   `yaml:"enabled"`
@@ -59,20 +64,38 @@ type KooloCfg struct {
 	}
 }
 
-type CharacterCfg struct {
-	MaxGameLength   int    `yaml:"maxGameLength"`
-	Username        string `yaml:"username"`
-	Password        string `yaml:"password"`
-	AuthMethod      string `yaml:"authMethod"`
-	AuthToken       string `yaml:"authToken"`
-	Realm           string `yaml:"realm"`
-	CharacterName   string `yaml:"characterName"`
-	CommandLineArgs string `yaml:"commandLineArgs"`
-	KillD2OnStop    bool   `yaml:"killD2OnStop"`
-	ClassicMode     bool   `yaml:"classicMode"`
-	CloseMiniPanel  bool   `yaml:"closeMiniPanel"`
+type Day struct {
+	DayOfWeek  int         `yaml:"dayOfWeek"`
+	TimeRanges []TimeRange `yaml:"timeRange"`
+}
 
-	Health struct {
+type Scheduler struct {
+	Enabled bool  `yaml:"enabled"`
+	Days    []Day `yaml:"days"`
+}
+
+type TimeRange struct {
+	Start time.Time `yaml:"start"`
+	End   time.Time `yaml:"end"`
+}
+
+type CharacterCfg struct {
+	MaxGameLength        int    `yaml:"maxGameLength"`
+	Username             string `yaml:"username"`
+	Password             string `yaml:"password"`
+	AuthMethod           string `yaml:"authMethod"`
+	AuthToken            string `yaml:"authToken"`
+	Realm                string `yaml:"realm"`
+	CharacterName        string `yaml:"characterName"`
+	CommandLineArgs      string `yaml:"commandLineArgs"`
+	KillD2OnStop         bool   `yaml:"killD2OnStop"`
+	ClassicMode          bool   `yaml:"classicMode"`
+	CloseMiniPanel       bool   `yaml:"closeMiniPanel"`
+	UseCentralizedPickit bool   `yaml:"useCentralizedPickit"`
+	HidePortraits        bool   `yaml:"hidePortraits"`
+
+	Scheduler Scheduler `yaml:"scheduler"`
+	Health    struct {
 		HealingPotionAt     int `yaml:"healingPotionAt"`
 		ManaPotionAt        int `yaml:"manaPotionAt"`
 		RejuvPotionAtLife   int `yaml:"rejuvPotionAtLife"`
@@ -91,13 +114,31 @@ type CharacterCfg struct {
 		UseMerc       bool   `yaml:"useMerc"`
 		StashToShared bool   `yaml:"stashToShared"`
 		UseTeleport   bool   `yaml:"useTeleport"`
+		BerserkerBarb struct {
+			FindItemSwitch              bool `yaml:"find_item_switch"`
+			SkipPotionPickupInTravincal bool `yaml:"skip_potion_pickup_in_travincal"`
+		} `yaml:"berserker_barb"`
+		NovaSorceress struct {
+			BossStaticThreshold int `yaml:"boss_static_threshold"`
+		} `yaml:"nova_sorceress"`
+		MosaicSin struct {
+			UseTigerStrike    bool `yaml:"useTigerStrike"`
+			UseCobraStrike    bool `yaml:"useCobraStrike"`
+			UseClawsOfThunder bool `yaml:"useClawsOfThunder"`
+			UseBladesOfIce    bool `yaml:"useBladesOfIce"`
+			UseFistsOfFire    bool `yaml:"useFistsOfFire"`
+		} `yaml:"mosaic_sin"`
 	} `yaml:"character"`
+
 	Game struct {
 		MinGoldPickupThreshold int                   `yaml:"minGoldPickupThreshold"`
+		UseCainIdentify        bool                  `yaml:"useCainIdentify"`
 		ClearTPArea            bool                  `yaml:"clearTPArea"`
 		Difficulty             difficulty.Difficulty `yaml:"difficulty"`
 		RandomizeRuns          bool                  `yaml:"randomizeRuns"`
 		Runs                   []Run                 `yaml:"runs"`
+		CreateLobbyGames       bool                  `yaml:"createLobbyGames"`
+		PublicGameCounter      int                   `yaml:"-"`
 		Pindleskin             struct {
 			SkipOnImmunities []stat.Resist `yaml:"skipOnImmunities"`
 		} `yaml:"pindleskin"`
@@ -108,7 +149,11 @@ type CharacterCfg struct {
 			MoveThroughBlackMarsh bool `yaml:"moveThroughBlackMarsh"`
 			OpenChests            bool `yaml:"openChests"`
 			FocusOnElitePacks     bool `yaml:"focusOnElitePacks"`
+			OnlyClearLevel2       bool `yaml:"onlyClearLevel2"`
 		} `yaml:"pit"`
+		Andariel struct {
+			ClearRoom bool `yaml:"clearRoom"`
+		}
 		StonyTomb struct {
 			OpenChests        bool `yaml:"openChests"`
 			FocusOnElitePacks bool `yaml:"focusOnElitePacks"`
@@ -121,9 +166,22 @@ type CharacterCfg struct {
 			OpenChests        bool `yaml:"openChests"`
 			FocusOnElitePacks bool `yaml:"focusOnElitePacks"`
 		} `yaml:"ancient_tunnels"`
+		DrifterCavern struct {
+			OpenChests        bool `yaml:"openChests"`
+			FocusOnElitePacks bool `yaml:"focusOnElitePacks"`
+		} `yaml:"drifter_cavern"`
+		SpiderCavern struct {
+			OpenChests        bool `yaml:"openChests"`
+			FocusOnElitePacks bool `yaml:"focusOnElitePacks"`
+		} `yaml:"spider_cavern"`
+		ArachnidLair struct {
+			OpenChests        bool `yaml:"openChests"`
+			FocusOnElitePacks bool `yaml:"focusOnElitePacks"`
+		} `yaml:"arachnid_lair"`
 		Mephisto struct {
 			KillCouncilMembers bool `yaml:"killCouncilMembers"`
 			OpenChests         bool `yaml:"openChests"`
+			ExitToA4           bool `yaml:"exitToA4"`
 		} `yaml:"mephisto"`
 		Tristram struct {
 			ClearPortal       bool `yaml:"clearPortal"`
@@ -133,9 +191,11 @@ type CharacterCfg struct {
 			ClearArea bool `yaml:"clearArea"`
 		} `yaml:"nihlathak"`
 		Diablo struct {
-			KillDiablo bool `yaml:"killDiablo"`
-			ClearArea  bool `yaml:"clearArea"`
-			OnlyElites bool `yaml:"onlyElites"`
+			KillDiablo                    bool `yaml:"killDiablo"`
+			StartFromStar                 bool `yaml:"startFromStar"`
+			FocusOnElitePacks             bool `yaml:"focusOnElitePacks"`
+			DisableItemPickupDuringBosses bool `yaml:"disableItemPickupDuringBosses"`
+			AttackFromDistance            int  `yaml:"attackFromDistance"`
 		} `yaml:"diablo"`
 		Baal struct {
 			KillBaal    bool `yaml:"killBaal"`
@@ -147,11 +207,15 @@ type CharacterCfg struct {
 		Eldritch struct {
 			KillShenk bool `yaml:"killShenk"`
 		} `yaml:"eldritch"`
+		LowerKurastChest struct {
+			OpenRacks bool `yaml:"openRacks"`
+		} `yaml:"lowerkurastchests"`
 		TerrorZone struct {
 			FocusOnElitePacks bool          `yaml:"focusOnElitePacks"`
 			SkipOnImmunities  []stat.Resist `yaml:"skipOnImmunities"`
 			SkipOtherRuns     bool          `yaml:"skipOtherRuns"`
 			Areas             []area.ID     `yaml:"areas"`
+			OpenChests        bool          `yaml:"openChests"`
 		} `yaml:"terror_zone"`
 		Leveling struct {
 			EnsurePointsAllocation bool `yaml:"ensurePointsAllocation"`
@@ -171,11 +235,8 @@ type CharacterCfg struct {
 		} `yaml:"quests"`
 	} `yaml:"game"`
 	Companion struct {
-		Enabled          bool   `yaml:"enabled"`
 		Leader           bool   `yaml:"leader"`
 		LeaderName       string `yaml:"leaderName"`
-		Attack           bool   `yaml:"attack"`
-		FollowLeader     bool   `yaml:"followLeader"`
 		GameNameTemplate string `yaml:"gameNameTemplate"`
 		GamePassword     string `yaml:"gamePassword"`
 	} `yaml:"companion"`
@@ -184,8 +245,10 @@ type CharacterCfg struct {
 		Items   []item.Name `yaml:"items"`
 	} `yaml:"gambling"`
 	CubeRecipes struct {
-		Enabled        bool     `yaml:"enabled"`
-		EnabledRecipes []string `yaml:"enabledRecipes"`
+		Enabled              bool     `yaml:"enabled"`
+		EnabledRecipes       []string `yaml:"enabledRecipes"`
+		SkipPerfectAmethysts bool     `yaml:"skipPerfectAmethysts"`
+		SkipPerfectRubies    bool     `yaml:"skipPerfectRubies"`
 	} `yaml:"cubing"`
 	BackToTown struct {
 		NoHpPotions     bool `yaml:"noHpPotions"`
@@ -225,53 +288,98 @@ func (bm BeltColumns) Total(potionType data.PotionType) int {
 // Load reads the config.ini file and returns a Config struct filled with data from the ini file
 func Load() error {
 	Characters = make(map[string]*CharacterCfg)
-	r, err := os.Open("config/koolo.yaml")
+
+	// Get the absolute path of the current working directory
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("error getting current working directory: %w", err)
+	}
+
+	// Function to get absolute path
+	getAbsPath := func(relPath string) string {
+		return filepath.Join(cwd, relPath)
+	}
+
+	kooloPath := getAbsPath("config/koolo.yaml")
+	r, err := os.Open(kooloPath)
 	if err != nil {
 		return fmt.Errorf("error loading koolo.yaml: %w", err)
 	}
+	defer r.Close()
 
 	d := yaml.NewDecoder(r)
 	if err = d.Decode(&Koolo); err != nil {
-		return fmt.Errorf("error reading config: %w", err)
+		return fmt.Errorf("error reading config %s: %w", kooloPath, err)
 	}
 
-	entries, err := os.ReadDir("config")
+	configDir := getAbsPath("config")
+	entries, err := os.ReadDir(configDir)
 	if err != nil {
-		return fmt.Errorf("error reading config: %w", err)
+		return fmt.Errorf("error reading config directory %s: %w", configDir, err)
 	}
 
+	// Read character configs
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
 		}
 
 		charCfg := CharacterCfg{}
-		r, err = os.Open("config/" + entry.Name() + "/config.yaml")
+
+		// Load character config from the current working directory/config/{charName}/config.yaml
+		charConfigPath := getAbsPath(filepath.Join("config", entry.Name(), "config.yaml"))
+		r, err = os.Open(charConfigPath)
 		if err != nil {
 			return fmt.Errorf("error loading config.yaml: %w", err)
 		}
+		defer r.Close()
 
+		// Load character config
 		d := yaml.NewDecoder(r)
 		if err = d.Decode(&charCfg); err != nil {
-			return fmt.Errorf("error reading %s character config: %w", entry.Name(), err)
+			return fmt.Errorf("error reading %s character config: %w", charConfigPath, err)
 		}
 
-		rules, err := nip.ReadDir("config/" + entry.Name() + "/pickit/")
+		var pickitPath string
+
+		if Koolo.CentralizedPickitPath != "" && charCfg.UseCentralizedPickit {
+			// Validate centralized pickit path
+			if _, err := os.Stat(Koolo.CentralizedPickitPath); os.IsNotExist(err) {
+				utils.ShowDialog("Error loading pickit rules for "+entry.Name(), "The centralized pickit path does not exist: "+Koolo.CentralizedPickitPath+"\nPlease check your Koolo settings.\nFalling back to local pickit.")
+
+				// Set the pickit path to the current dir/config/{charName}/pickit
+				pickitPath = getAbsPath(filepath.Join("config", entry.Name(), "pickit")) + "\\"
+			} else {
+				pickitPath = Koolo.CentralizedPickitPath + "\\"
+			}
+		} else {
+			// Set the pickit path to the current dir/config/{charName}/pickit
+			pickitPath = getAbsPath(filepath.Join("config", entry.Name(), "pickit")) + "\\"
+		}
+
+		// Load the pickit rules from the directory
+		rules, err := nip.ReadDir(pickitPath)
 		if err != nil {
-			return err
+			return fmt.Errorf("error reading pickit directory %s: %w", pickitPath, err)
 		}
 
-		if charCfg.Game.Runs[0] == "leveling" {
-			levelingRules, err := nip.ReadDir("config/" + entry.Name() + "/pickit_leveling/")
+		// Load the leveling pickit rules
+		if len(charCfg.Game.Runs) > 0 && charCfg.Game.Runs[0] == "leveling" {
+			levelingPickitPath := getAbsPath(filepath.Join("config", entry.Name(), "pickit_leveling")) + "\\"
+			levelingRules, err := nip.ReadDir(levelingPickitPath)
 			if err != nil {
-				return err
+				return fmt.Errorf("error reading pickit_leveling directory %s: %w", levelingPickitPath, err)
 			}
 			rules = append(rules, levelingRules...)
 		}
 
 		charCfg.Runtime.Rules = rules
-
 		Characters[entry.Name()] = &charCfg
+	}
+
+	// Validate configs
+	for _, charCfg := range Characters {
+		charCfg.Validate()
 	}
 
 	return nil
@@ -324,6 +432,7 @@ func ValidateAndSaveConfig(config KooloCfg) error {
 func SaveSupervisorConfig(supervisorName string, config *CharacterCfg) error {
 	filePath := filepath.Join("config", supervisorName, "config.yaml")
 	d, err := yaml.Marshal(config)
+	config.Validate()
 	if err != nil {
 		return err
 	}
@@ -334,4 +443,21 @@ func SaveSupervisorConfig(supervisorName string, config *CharacterCfg) error {
 	}
 
 	return Load()
+}
+
+func (c *CharacterCfg) Validate() {
+	if c.Character.Class == "nova" || c.Character.Class == "lightsorc" {
+		minThreshold := 65 // Default
+		switch c.Game.Difficulty {
+		case difficulty.Normal:
+			minThreshold = 1
+		case difficulty.Nightmare:
+			minThreshold = 33
+		case difficulty.Hell:
+			minThreshold = 50
+		}
+		if c.Character.NovaSorceress.BossStaticThreshold < minThreshold || c.Character.NovaSorceress.BossStaticThreshold > 100 {
+			c.Character.NovaSorceress.BossStaticThreshold = minThreshold
+		}
+	}
 }

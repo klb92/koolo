@@ -42,6 +42,14 @@
                     />
                 </label>
                 <label>
+                    Centralized Pickit Path (leave blank if you don't want to use a single location for all pickit files)
+                    <input
+                            name="centralized_pickit_path"
+                            placeholder="E:\games\mypickits"
+                            value="{{.CentralizedPickitPath}}"
+                    />
+                </label>
+                <label>
                     <input
                             {{ if .UseCustomSettings }}
                                 checked="checked"
@@ -100,6 +108,11 @@
                     />
                     Enabled (Restart required)
                 </label>
+                 <input
+                        name="discord_admins"
+                        placeholder="Discord User IDs who can use bot commands separated by commas"
+                        value="{{.Discord.BotAdmins}}"
+                />
                 <input
                         name="discord_token"
                         placeholder="Token"
@@ -122,6 +135,10 @@
                     <label>
                         <input type="checkbox" name="enable_run_finish_messages" value="{{ .Discord.EnableRunFinishMessages }}" {{ if .Discord.EnableRunFinishMessages }} checked="checked" {{ end }} />
                         Enable Run Finish Messages
+                    </label>
+                    <label>
+                        <input type="checkbox" name="enable_discord_chicken_messages" value="{{ .Discord.EnableDiscordChickenMessages }}" {{ if .Discord.EnableDiscordChickenMessages }} checked="checked" {{ end }} />
+                        Enable Chicken/Death Messages
                     </label>
                 </fieldset>
                 <h4>Discord webhook (Post Items)</h4>

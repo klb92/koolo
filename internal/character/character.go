@@ -5,25 +5,21 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/hectorgimenez/koolo/internal/container"
-	"github.com/hectorgimenez/koolo/internal/game"
-
 	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/d2go/pkg/data/stat"
-	"github.com/hectorgimenez/koolo/internal/action"
+	"github.com/hectorgimenez/koolo/internal/context"
 )
 
-func BuildCharacter(logger *slog.Logger, container container.Container) (action.Character, error) {
+func BuildCharacter(ctx *context.Context) (context.Character, error) {
 	bc := BaseCharacter{
-		logger:    logger,
-		container: container,
+		Context: ctx,
 	}
 
-	if container.CharacterCfg.Game.Runs[0] == "leveling" {
-		switch strings.ToLower(container.CharacterCfg.Character.Class) {
+	if len(ctx.CharacterCfg.Game.Runs) > 0 && ctx.CharacterCfg.Game.Runs[0] == "leveling" {
+		switch strings.ToLower(ctx.CharacterCfg.Character.Class) {
 		case "sorceress_leveling_lightning":
 			return SorceressLevelingLightning{BaseCharacter: bc}, nil
-		case "sorceress":
+		case "sorceress_leveling":
 			return SorceressLeveling{BaseCharacter: bc}, nil
 		case "paladin":
 			return PaladinLeveling{BaseCharacter: bc}, nil
@@ -32,10 +28,16 @@ func BuildCharacter(logger *slog.Logger, container container.Container) (action.
 		return nil, fmt.Errorf("leveling only available for sorceress and paladin")
 	}
 
-	switch strings.ToLower(container.CharacterCfg.Character.Class) {
+	switch strings.ToLower(ctx.CharacterCfg.Character.Class) {
 	case "sorceress":
 		return BlizzardSorceress{BaseCharacter: bc}, nil
-	case "lightning":
+	case "fireballsorc":
+		return FireballSorceress{BaseCharacter: bc}, nil
+	case "nova":
+		return NovaSorceress{BaseCharacter: bc}, nil
+	case "hydraorb":
+		return HydraOrbSorceress{BaseCharacter: bc}, nil
+	case "lightsorc":
 		return LightningSorceress{BaseCharacter: bc}, nil
 	case "hammerdin":
 		return Hammerdin{BaseCharacter: bc}, nil
@@ -43,30 +45,31 @@ func BuildCharacter(logger *slog.Logger, container container.Container) (action.
 		return Foh{BaseCharacter: bc}, nil
 	case "trapsin":
 		return Trapsin{BaseCharacter: bc}, nil
-	case "mosiac":
-		return MosiacSin{BaseCharacter: bc}, nil
+	case "mosaic":
+		return MosaicSin{BaseCharacter: bc}, nil
 	case "winddruid":
 		return WindDruid{BaseCharacter: bc}, nil
 	case "javazon":
 		return Javazon{BaseCharacter: bc}, nil
+	case "berserker":
+		return &Berserker{BaseCharacter: bc}, nil // Return a pointer to Berserker
 	}
 
-	return nil, fmt.Errorf("class %s not implemented", container.CharacterCfg.Character.Class)
+	return nil, fmt.Errorf("class %s not implemented", ctx.CharacterCfg.Character.Class)
 }
 
 type BaseCharacter struct {
-	logger    *slog.Logger
-	container container.Container
+	*context.Context
 }
 
-func (bc BaseCharacter) preBattleChecks(d game.Data, id data.UnitID, skipOnImmunities []stat.Resist) bool {
-	monster, found := d.Monsters.FindByID(id)
+func (bc BaseCharacter) preBattleChecks(id data.UnitID, skipOnImmunities []stat.Resist) bool {
+	monster, found := bc.Data.Monsters.FindByID(id)
 	if !found {
 		return false
 	}
 	for _, i := range skipOnImmunities {
 		if monster.IsImmune(i) {
-			bc.logger.Info("Monster is immune! skipping", slog.String("immuneTo", string(i)))
+			bc.Logger.Info("Monster is immune! skipping", slog.String("immuneTo", string(i)))
 			return false
 		}
 	}

@@ -1,329 +1,272 @@
 package character
 
 import (
+	"log/slog"
 	"time"
-
-	"github.com/hectorgimenez/koolo/internal/game"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/d2go/pkg/data/npc"
 	"github.com/hectorgimenez/d2go/pkg/data/skill"
 	"github.com/hectorgimenez/d2go/pkg/data/stat"
-	"github.com/hectorgimenez/koolo/internal/action"
 	"github.com/hectorgimenez/koolo/internal/action/step"
-	"github.com/hectorgimenez/koolo/internal/pather"
+	"github.com/hectorgimenez/koolo/internal/context"
+	"github.com/hectorgimenez/koolo/internal/game"
 )
 
 const (
-	lightningSorceressMaxAttacksLoop = 10
-	lightningSorceressMinDistance    = 8
-	lightningSorceressMaxDistance    = 13
+	LightningMinDistance          = 10
+	LightningMaxDistance          = 20
+	LightningStaticMinDistance    = 1
+	LightningStaticMaxDistance    = 3
+	LightningMaxAttacksLoop       = 40
+	LightningStaticFieldThreshold = 67 // Cast Static Field if monster HP is above this percentage
 )
 
 type LightningSorceress struct {
 	BaseCharacter
 }
 
+func (s LightningSorceress) CheckKeyBindings() []skill.ID {
+	requiredKeybindings := []skill.ID{skill.ChainLightning, skill.Teleport, skill.TomeOfTownPortal, skill.StaticField, skill.ShiverArmor}
+	missingKeybindings := []skill.ID{}
+
+	for _, cskill := range requiredKeybindings {
+		if _, found := s.Data.KeyBindings.KeyBindingForSkill(cskill); !found {
+			missingKeybindings = append(missingKeybindings, cskill)
+		}
+	}
+
+	// Check for one of the armor skills
+	armorSkills := []skill.ID{skill.FrozenArmor, skill.ShiverArmor, skill.ChillingArmor}
+	hasArmor := false
+	for _, armor := range armorSkills {
+		if _, found := s.Data.KeyBindings.KeyBindingForSkill(armor); found {
+			hasArmor = true
+			break
+		}
+	}
+	if !hasArmor {
+		missingKeybindings = append(missingKeybindings, skill.FrozenArmor)
+	}
+
+	if len(missingKeybindings) > 0 {
+		s.Logger.Debug("There are missing required key bindings.", slog.Any("Bindings", missingKeybindings))
+	}
+
+	return missingKeybindings
+}
+
 func (s LightningSorceress) KillMonsterSequence(
 	monsterSelector func(d game.Data) (data.UnitID, bool),
 	skipOnImmunities []stat.Resist,
-	opts ...step.AttackOption,
-) action.Action {
+) error {
+	ctx := context.Get()
 	completedAttackLoops := 0
-	previousUnitID := 0
+	staticFieldCast := false
+	ldOpts := step.Distance(LightningMinDistance, LightningMaxDistance)
+	lightningOpts := []step.AttackOption{
+		step.RangedDistance(LightningMinDistance, LightningMaxDistance),
+	}
 
-	return action.NewStepChain(func(d game.Data) []step.Step {
+	for {
+		ctx.PauseIfNotPriority()
 
-		id, found := monsterSelector(d)
+		id, found := monsterSelector(*s.Data)
 		if !found {
-			return []step.Step{}
-		}
-		if previousUnitID != int(id) {
-			completedAttackLoops = 0
-		}
-
-		if !s.preBattleChecks(d, id, skipOnImmunities) {
-			return []step.Step{}
-		}
-
-		if len(opts) == 0 {
-			opts = append(opts, step.Distance(lightningSorceressMinDistance, lightningSorceressMaxDistance))
-		}
-
-		if completedAttackLoops >= lightningSorceressMaxAttacksLoop {
-			return []step.Step{}
-		}
-
-		steps := make([]step.Step, 0)
-
-		// Check if we should use static
-		if s.shouldCastStatic(d) {
-			steps = append(steps, step.SecondaryAttack(skill.StaticField, id, 1, opts...))
-		}
-
-		if completedAttackLoops%2 == 0 {
-			for _, m := range d.Monsters.Enemies() {
-				if d := pather.DistanceFromMe(d, m.Position); d < 5 {
-					s.logger.Debug("Monster detected close to the player, casting Nova over it")
-					steps = append(steps, step.SecondaryAttack(skill.Nova, m.UnitID, 1, opts...))
-					break
-				}
-			}
-		}
-
-		// In case monster is stuck behind a wall or character is not able to reach it we will short the distance
-		if completedAttackLoops > 5 {
-			if completedAttackLoops == 6 {
-				s.logger.Debug("Looks like monster is not reachable, reducing max attack distance.")
-			}
-			opts = []step.AttackOption{step.Distance(0, 1)}
-		}
-
-		steps = append(steps,
-			step.SecondaryAttack(skill.Nova, id, 5, opts...),
-		)
-		completedAttackLoops++
-		previousUnitID = int(id)
-
-		return steps
-	}, action.RepeatUntilNoSteps())
-}
-
-func (s LightningSorceress) BuffSkills(d game.Data) []skill.ID {
-	skillsList := make([]skill.ID, 0)
-	if _, found := d.KeyBindings.KeyBindingForSkill(skill.EnergyShield); found {
-		skillsList = append(skillsList, skill.EnergyShield)
-	}
-
-	if _, found := d.KeyBindings.KeyBindingForSkill(skill.ThunderStorm); found {
-		skillsList = append(skillsList, skill.ThunderStorm)
-	}
-
-	armors := []skill.ID{skill.ChillingArmor, skill.ShiverArmor, skill.FrozenArmor}
-	for _, armor := range armors {
-		if _, found := d.KeyBindings.KeyBindingForSkill(armor); found {
-			skillsList = append(skillsList, armor)
-			return skillsList
-		}
-	}
-
-	return skillsList
-}
-
-func (s LightningSorceress) PreCTABuffSkills(d game.Data) []skill.ID {
-	return []skill.ID{}
-}
-
-func (s LightningSorceress) shouldCastStatic(d game.Data) bool {
-
-	// Iterate through all mobs within max range and collect them
-	mobs := make([]data.Monster, 0)
-
-	for _, m := range d.Monsters.Enemies() {
-		if pather.DistanceFromMe(d, m.Position) <= lightningSorceressMaxDistance+5 {
-			mobs = append(mobs, m)
-		} else {
-			continue
-		}
-	}
-
-	// Iterate through the mob list and check their if more than 50% of the mobs are above 60% hp
-	var mobsAbove60Percent int
-	for _, mob := range mobs {
-
-		life := mob.Stats[stat.Life]
-		maxLife := mob.Stats[stat.MaxLife]
-
-		lifePercentage := int((float64(life) / float64(maxLife)) * 100)
-
-		if lifePercentage > 60 {
-			mobsAbove60Percent++
-		}
-	}
-
-	return mobsAbove60Percent > len(mobs)/2
-}
-
-func (s LightningSorceress) KillCountess() action.Action {
-	return s.killMonsterByName(npc.DarkStalker, data.MonsterTypeSuperUnique, lightningSorceressMaxDistance, false, nil)
-}
-
-func (s LightningSorceress) KillAndariel() action.Action {
-	return action.NewChain(func(d game.Data) []action.Action {
-		return []action.Action{
-			action.NewStepChain(func(d game.Data) []step.Step {
-				m, _ := d.Monsters.FindOne(npc.Andariel, data.MonsterTypeNone)
-				return []step.Step{
-					step.SecondaryAttack(skill.StaticField, m.UnitID, 3, step.Distance(lightningSorceressMaxDistance, 15)),
-				}
-			}),
-			s.killMonsterByName(npc.Andariel, data.MonsterTypeNone, lightningSorceressMaxDistance, false, nil),
-		}
-	})
-}
-
-func (s LightningSorceress) KillSummoner() action.Action {
-	return s.killMonsterByName(npc.Summoner, data.MonsterTypeNone, lightningSorceressMaxDistance, false, nil)
-}
-
-func (s LightningSorceress) KillDuriel() action.Action {
-	return action.NewChain(func(d game.Data) []action.Action {
-		return []action.Action{
-			action.NewStepChain(func(d game.Data) []step.Step {
-				m, _ := d.Monsters.FindOne(npc.Duriel, data.MonsterTypeNone)
-				return []step.Step{
-					step.SecondaryAttack(skill.StaticField, m.UnitID, 3, step.Distance(lightningSorceressMaxDistance, 15)),
-				}
-			}),
-			s.killMonsterByName(npc.Duriel, data.MonsterTypeNone, lightningSorceressMaxDistance, true, nil),
-		}
-	})
-}
-
-func (s LightningSorceress) KillPindle(skipOnImmunities []stat.Resist) action.Action {
-	return s.killMonsterByName(npc.DefiledWarrior, data.MonsterTypeSuperUnique, lightningSorceressMaxDistance, false, skipOnImmunities)
-}
-
-func (s LightningSorceress) KillMephisto() action.Action {
-	return action.NewChain(func(d game.Data) []action.Action {
-		return []action.Action{
-			action.NewStepChain(func(d game.Data) []step.Step {
-				m, _ := d.Monsters.FindOne(npc.Mephisto, data.MonsterTypeNone)
-				return []step.Step{
-					step.SecondaryAttack(skill.StaticField, m.UnitID, 3, step.Distance(lightningSorceressMaxDistance, 15)),
-				}
-			}),
-			s.killMonsterByName(npc.Mephisto, data.MonsterTypeNone, lightningSorceressMaxDistance, true, nil),
-		}
-	})
-}
-
-func (s LightningSorceress) KillNihlathak() action.Action {
-	return s.killMonsterByName(npc.Nihlathak, data.MonsterTypeSuperUnique, lightningSorceressMaxDistance, false, nil)
-}
-
-func (s LightningSorceress) KillDiablo() action.Action {
-	timeout := time.Second * 20
-	startTime := time.Time{}
-	diabloFound := false
-	return action.NewChain(func(d game.Data) []action.Action {
-		if startTime.IsZero() {
-			startTime = time.Now()
-		}
-
-		if time.Since(startTime) > timeout && !diabloFound {
-			s.logger.Error("Diablo was not found, timeout reached")
 			return nil
 		}
 
-		diablo, found := d.Monsters.FindOne(npc.Diablo, data.MonsterTypeNone)
-		if !found || diablo.Stats[stat.Life] <= 0 {
-			// Already dead
-			if diabloFound {
-				return nil
+		if !s.preBattleChecks(id, skipOnImmunities) {
+			return nil
+		}
+
+		monster, found := s.Data.Monsters.FindByID(id)
+		if !found || monster.Stats[stat.Life] <= 0 {
+			return nil
+		}
+
+		// Cast Static Field first if needed
+		if !staticFieldCast && s.shouldCastStaticField(monster) {
+			staticOpts := []step.AttackOption{
+				step.RangedDistance(LightningStaticMinDistance, LightningStaticMaxDistance),
 			}
 
-			// Keep waiting...
-			return []action.Action{action.NewStepChain(func(d game.Data) []step.Step {
-				return []step.Step{step.Wait(time.Millisecond * 100)}
-			})}
-		}
-
-		diabloFound = true
-		s.logger.Info("Diablo detected, attacking")
-
-		return []action.Action{
-			action.NewStepChain(func(d game.Data) []step.Step {
-				return []step.Step{
-					step.SecondaryAttack(skill.StaticField, diablo.UnitID, 3, step.Distance(3, 8)),
-				}
-			}),
-			s.killMonster(npc.Diablo, data.MonsterTypeNone),
-		}
-	}, action.RepeatUntilNoSteps())
-}
-
-func (s LightningSorceress) KillIzual() action.Action {
-	return action.NewChain(func(d game.Data) []action.Action {
-		return []action.Action{
-			action.NewStepChain(func(d game.Data) []step.Step {
-				m, _ := d.Monsters.FindOne(npc.Izual, data.MonsterTypeNone)
-				return []step.Step{
-					step.SecondaryAttack(skill.StaticField, m.UnitID, 3, step.Distance(5, 8)),
-				}
-			}),
-			// We will need a lot of cycles to kill him probably
-			s.killMonster(npc.Izual, data.MonsterTypeNone),
-			s.killMonster(npc.Izual, data.MonsterTypeNone),
-			s.killMonster(npc.Izual, data.MonsterTypeNone),
-			s.killMonster(npc.Izual, data.MonsterTypeNone),
-			s.killMonster(npc.Izual, data.MonsterTypeNone),
-			s.killMonster(npc.Izual, data.MonsterTypeNone),
-			s.killMonster(npc.Izual, data.MonsterTypeNone),
-		}
-	})
-}
-
-func (s LightningSorceress) KillBaal() action.Action {
-	return action.NewChain(func(d game.Data) []action.Action {
-		return []action.Action{
-			action.NewStepChain(func(d game.Data) []step.Step {
-				m, _ := d.Monsters.FindOne(npc.BaalCrab, data.MonsterTypeNone)
-				return []step.Step{
-					step.SecondaryAttack(skill.StaticField, m.UnitID, 3, step.Distance(5, 8)),
-				}
-			}),
-			// We will need a lot of cycles to kill him probably
-			s.killMonster(npc.BaalCrab, data.MonsterTypeNone),
-			s.killMonster(npc.BaalCrab, data.MonsterTypeNone),
-			s.killMonster(npc.BaalCrab, data.MonsterTypeNone),
-			s.killMonster(npc.BaalCrab, data.MonsterTypeNone),
-		}
-	})
-}
-
-func (s LightningSorceress) KillCouncil() action.Action {
-	return s.KillMonsterSequence(func(d game.Data) (data.UnitID, bool) {
-		// Exclude monsters that are not council members
-		var councilMembers []data.Monster
-		var coldImmunes []data.Monster
-		for _, m := range d.Monsters.Enemies() {
-			if m.Name == npc.CouncilMember || m.Name == npc.CouncilMember2 || m.Name == npc.CouncilMember3 {
-				if m.IsImmune(stat.ColdImmune) {
-					coldImmunes = append(coldImmunes, m)
-				} else {
-					councilMembers = append(councilMembers, m)
-				}
+			if err := step.SecondaryAttack(skill.StaticField, monster.UnitID, 1, staticOpts...); err == nil {
+				staticFieldCast = true
+				continue
 			}
 		}
 
-		councilMembers = append(councilMembers, coldImmunes...)
-
-		for _, m := range councilMembers {
-			return m.UnitID, true
+		if monster.Name == npc.Andariel ||
+			monster.Name == npc.Duriel ||
+			monster.Name == npc.Mephisto ||
+			monster.Name == npc.Diablo ||
+			monster.Name == npc.BaalCrab ||
+			monster.Name == npc.Izual {
+			if err := step.PrimaryAttack(monster.UnitID, 1, true, ldOpts); err == nil {
+				completedAttackLoops++
+			}
+		} else {
+			if err := step.SecondaryAttack(skill.ChainLightning, monster.UnitID, 1, lightningOpts...); err == nil {
+				completedAttackLoops++
+			}
 		}
 
-		return 0, false
-	}, nil, step.Distance(8, lightningSorceressMaxDistance))
+		if completedAttackLoops >= LightningMaxAttacksLoop {
+			completedAttackLoops = 0
+			staticFieldCast = false
+		}
+	}
 }
 
-func (s LightningSorceress) killMonsterByName(id npc.ID, monsterType data.MonsterType, maxDistance int, _ bool, skipOnImmunities []stat.Resist) action.Action {
+func (s LightningSorceress) shouldCastStaticField(monster data.Monster) bool {
+	// Only cast Static Field if monster HP is above threshold
+	maxLife := float64(monster.Stats[stat.MaxLife])
+	if maxLife == 0 {
+		return false
+	}
+
+	hpPercentage := (float64(monster.Stats[stat.Life]) / maxLife) * 100
+	return hpPercentage > LightningStaticFieldThreshold
+}
+
+func (s LightningSorceress) killBossWithStatic(bossID npc.ID, monsterType data.MonsterType) error {
+	ctx := context.Get()
+
+	for {
+		ctx.PauseIfNotPriority()
+
+		boss, found := s.Data.Monsters.FindOne(bossID, monsterType)
+		if !found || boss.Stats[stat.Life] <= 0 {
+			return nil
+		}
+
+		bossHPPercent := (float64(boss.Stats[stat.Life]) / float64(boss.Stats[stat.MaxLife])) * 100
+		thresholdFloat := float64(ctx.CharacterCfg.Character.NovaSorceress.BossStaticThreshold)
+
+		// Cast Static Field until boss HP is below threshold
+		if bossHPPercent > thresholdFloat {
+			staticOpts := []step.AttackOption{
+				step.Distance(LightningStaticMinDistance, LightningStaticMaxDistance),
+			}
+			err := step.SecondaryAttack(skill.StaticField, boss.UnitID, 1, staticOpts...)
+			if err != nil {
+				s.Logger.Warn("Failed to cast Static Field", slog.String("error", err.Error()))
+			}
+			continue
+		}
+
+		// Switch to Lightning once boss HP is low enough
+		return s.KillMonsterSequence(func(d game.Data) (data.UnitID, bool) {
+			return boss.UnitID, true
+		}, nil)
+	}
+}
+
+func (s LightningSorceress) killMonsterByName(id npc.ID, monsterType data.MonsterType, skipOnImmunities []stat.Resist) error {
 	return s.KillMonsterSequence(func(d game.Data) (data.UnitID, bool) {
 		if m, found := d.Monsters.FindOne(id, monsterType); found {
 			return m.UnitID, true
 		}
 
 		return 0, false
-	}, skipOnImmunities, step.Distance(lightningSorceressMinDistance, maxDistance))
+	}, skipOnImmunities)
 }
 
-func (s LightningSorceress) killMonster(npc npc.ID, t data.MonsterType) action.Action {
-	return s.KillMonsterSequence(func(d game.Data) (data.UnitID, bool) {
-		m, found := d.Monsters.FindOne(npc, t)
-		if !found {
-			return 0, false
+func (s LightningSorceress) BuffSkills() []skill.ID {
+	skillsList := make([]skill.ID, 0)
+	if _, found := s.Data.KeyBindings.KeyBindingForSkill(skill.EnergyShield); found {
+		skillsList = append(skillsList, skill.EnergyShield)
+	}
+	if _, found := s.Data.KeyBindings.KeyBindingForSkill(skill.ThunderStorm); found {
+		skillsList = append(skillsList, skill.ThunderStorm)
+	}
+
+	// Add one of the armor skills
+	for _, armor := range []skill.ID{skill.ChillingArmor, skill.ShiverArmor, skill.FrozenArmor} {
+		if _, found := s.Data.KeyBindings.KeyBindingForSkill(armor); found {
+			skillsList = append(skillsList, armor)
+			break
+		}
+	}
+
+	return skillsList
+}
+
+func (s LightningSorceress) PreCTABuffSkills() []skill.ID {
+	return []skill.ID{}
+}
+
+func (s LightningSorceress) KillAndariel() error {
+	return s.killBossWithStatic(npc.Andariel, data.MonsterTypeUnique)
+}
+
+func (s LightningSorceress) KillDuriel() error {
+	return s.killBossWithStatic(npc.Duriel, data.MonsterTypeUnique)
+}
+
+func (s LightningSorceress) KillMephisto() error {
+	return s.killBossWithStatic(npc.Mephisto, data.MonsterTypeUnique)
+}
+
+func (s LightningSorceress) KillDiablo() error {
+	timeout := time.Second * 20
+	startTime := time.Now()
+	diabloFound := false
+
+	for {
+		if time.Since(startTime) > timeout && !diabloFound {
+			s.Logger.Error("Diablo was not found, timeout reached")
+			return nil
 		}
 
-		return m.UnitID, true
+		diablo, found := s.Data.Monsters.FindOne(npc.Diablo, data.MonsterTypeUnique)
+		if !found || diablo.Stats[stat.Life] <= 0 {
+			if diabloFound {
+				return nil
+			}
+			time.Sleep(200 * time.Millisecond)
+			continue
+		}
+
+		diabloFound = true
+		s.Logger.Info("Diablo detected, attacking")
+
+		return s.killBossWithStatic(npc.Diablo, data.MonsterTypeUnique)
+	}
+}
+
+func (s LightningSorceress) KillBaal() error {
+	return s.killBossWithStatic(npc.BaalCrab, data.MonsterTypeUnique)
+}
+
+func (s LightningSorceress) KillCountess() error {
+	return s.killMonsterByName(npc.DarkStalker, data.MonsterTypeSuperUnique, nil)
+}
+
+func (s LightningSorceress) KillSummoner() error {
+	return s.killMonsterByName(npc.Summoner, data.MonsterTypeUnique, nil)
+}
+
+func (s LightningSorceress) KillIzual() error {
+	return s.killBossWithStatic(npc.Izual, data.MonsterTypeUnique)
+}
+
+func (s LightningSorceress) KillCouncil() error {
+	return s.KillMonsterSequence(func(d game.Data) (data.UnitID, bool) {
+		for _, m := range d.Monsters.Enemies() {
+			if m.Name == npc.CouncilMember || m.Name == npc.CouncilMember2 || m.Name == npc.CouncilMember3 {
+				return m.UnitID, true
+			}
+		}
+		return 0, false
 	}, nil)
+}
+
+func (s LightningSorceress) KillPindle() error {
+	return s.killMonsterByName(npc.DefiledWarrior, data.MonsterTypeSuperUnique, s.CharacterCfg.Game.Pindleskin.SkipOnImmunities)
+}
+
+func (s LightningSorceress) KillNihlathak() error {
+	return s.killMonsterByName(npc.Nihlathak, data.MonsterTypeSuperUnique, nil)
 }
